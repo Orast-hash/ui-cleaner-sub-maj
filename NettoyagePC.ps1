@@ -26,7 +26,7 @@ Add-Type -AssemblyName System.Drawing
 
 # ---- Personnalisation ----
 $NomEntreprise   = "Urgence Informatique"
-$Version         = "1.3.1"
+$Version         = "1.4.0"
 # Generer le rapport sur le Bureau apres nettoyage ? ($true / $false)
 $GenererRapport  = $false
 # Memoire virtuelle : taille calculee selon la RAM du poste.
@@ -36,15 +36,20 @@ $PageFilePlancher = 2048
 $PageFilePlafond  = 8192
 # URL du petit fichier version.txt (pour afficher le statut a jour / obsolete).
 # Mets la meme adresse que dans Lanceur.ps1.
-$UrlVersion    = "https://raw.githubusercontent.com/Orast-hash/ui-cleaner-sub-maj/refs/heads/main/version.txt"
+$UrlVersion    = "https://raw.githubusercontent.com/ton-compte/ton-depot/main/version.txt"
 
 # ---- Contrats de maintenance (licence) ----
 # Liste des clients actifs hebergee sur GitHub (un ID par ligne, format ID;Nom)
-$UrlClients = "https://raw.githubusercontent.com/Orast-hash/ui-cleaner-sub-maj/refs/heads/main/clients.txt"
+$UrlClients = "https://raw.githubusercontent.com/ton-compte/ton-depot/main/clients.txt"
 # Fichier contenant le numero du client, ecrit sur CE poste a l'installation
 $FichierID  = "C:\ProgramData\Urgence Informatique\client.id"
 # Tolerance hors-ligne (en jours) avant de bloquer si la liste est injoignable
 $GraceJours = 14
+
+# ---- État de santé : derniere version de Windows 11 connue ----
+# A mettre a jour quand Microsoft publie une nouvelle version (env. 1x/an).
+# Sert a indiquer "A JOUR" ou "mise a niveau disponible".
+$DerniereVersionWin11 = "25H2"
 # --------------------------
 
 # Detection des droits administrateur
@@ -150,17 +155,17 @@ function Get-Categories {
         Chemins = @("$env:WINDIR\Prefetch")
     }
 
-    $cats["Desactiver la veille prolongee (libere de l'espace)"] = @{
+    $cats["Désactiver la veille prolongée (libère de l'espace)"] = @{
         Admin       = $true
         Hibernation = $true
     }
 
-    $cats["Memoire virtuelle : taille fixee selon la RAM ($PageFileMo Mo)"] = @{
+    $cats["Mémoire virtuelle : taille fixée selon la RAM ($PageFileMo Mo)"] = @{
         Admin    = $true
         PageFile = $true
     }
 
-    $cats["Nettoyer le composant Windows (WinSxS / maj obsoletes)"] = @{
+    $cats["Nettoyer le composant Windows (WinSxS / maj obsolètes)"] = @{
         Admin  = $true
         WinSxS = $true
         Defaut = $false
@@ -233,8 +238,15 @@ function Measure-Categorie($cat) {
             $filtre = if ($cat.Filtre) { $cat.Filtre } else { "*" }
             $fichiers = Get-ChildItem -Path $d.FullName -Filter $filtre `
                 -Recurse -Force -File -ErrorAction SilentlyContinue
+            $compteur = 0
             foreach ($f in $fichiers) {
                 $total += $f.Length
+                # Garde la fenetre reactive (sinon elle se "fige" quand un
+                # antivirus ralentit fortement le parcours des fichiers)
+                $compteur++
+                if (($compteur % 200) -eq 0) {
+                    [System.Windows.Forms.Application]::DoEvents()
+                }
             }
         }
     }
@@ -253,10 +265,10 @@ function Clear-Categorie($nom, $cat) {
             Start-Sleep -Milliseconds 800
             $apres  = Measure-Categorie $cat
             $libere = [math]::Max(0, $avant - $apres)
-            $Journal.Add("  [OK] Veille prolongee desactivee : $(Format-Taille $libere) liberes")
+            $Journal.Add("  [OK] Veille prolongée désactivée : $(Format-Taille $libere) libérés")
             return $libere
         } catch {
-            $Journal.Add("  [!]  Veille prolongee : $($_.Exception.Message)")
+            $Journal.Add("  [!]  Veille prolongée : $($_.Exception.Message)")
             return 0L
         }
     }
@@ -279,9 +291,9 @@ function Clear-Categorie($nom, $cat) {
                 $p.MaximumSize = $PageFileMo
                 [void]$p.Put()
             }
-            $Journal.Add("  [OK] Memoire virtuelle fixee a $PageFileMo Mo (effet au redemarrage)")
+            $Journal.Add("  [OK] Mémoire virtuelle fixée à $PageFileMo Mo (effet au redémarrage)")
         } catch {
-            $Journal.Add("  [!]  Memoire virtuelle : $($_.Exception.Message)")
+            $Journal.Add("  [!]  Mémoire virtuelle : $($_.Exception.Message)")
         }
         return 0L
     }
@@ -294,7 +306,7 @@ function Clear-Categorie($nom, $cat) {
         try {
             & "$env:WINDIR\System32\Dism.exe" /Online /Cleanup-Image /StartComponentCleanup | Out-Null
             $gagne = [math]::Max(0, (Get-FreeBytes) - $libreAvant)
-            $Journal.Add("  [OK] Composant Windows nettoye (DISM) : $(Format-Taille $gagne) liberes")
+            $Journal.Add("  [OK] Composant Windows nettoyé (DISM) : $(Format-Taille $gagne) libérés")
             return $gagne
         } catch {
             $Journal.Add("  [!]  Composant Windows (DISM) : $($_.Exception.Message)")
@@ -305,7 +317,7 @@ function Clear-Categorie($nom, $cat) {
     if ($cat.WindowsOld) {
         $wo = "$env:SystemDrive\Windows.old"
         if (-not (Test-Path $wo)) {
-            $Journal.Add("  [i]  Windows.old : absent (rien a supprimer)")
+            $Journal.Add("  [i]  Windows.old : absent (rien à supprimer)")
             return 0L
         }
         $libreAvant = Get-FreeBytes
@@ -320,7 +332,7 @@ function Clear-Categorie($nom, $cat) {
             if (Test-Path $wo) {
                 $Journal.Add("  [!]  Windows.old : suppression partielle ($(Format-Taille $gagne))")
             } else {
-                $Journal.Add("  [OK] Windows.old supprime : $(Format-Taille $gagne) liberes")
+                $Journal.Add("  [OK] Windows.old supprimé : $(Format-Taille $gagne) libérés")
             }
             return $gagne
         } catch {
@@ -332,7 +344,7 @@ function Clear-Categorie($nom, $cat) {
     if ($cat.Corbeille) {
         try {
             Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-            $Journal.Add("  [OK] Corbeille videe")
+            $Journal.Add("  [OK] Corbeille vidée")
         } catch {
             $Journal.Add("  [!]  Corbeille : $($_.Exception.Message)")
         }
@@ -365,7 +377,7 @@ function Clear-Categorie($nom, $cat) {
 
     $apres = Measure-Categorie $cat
     $libere = [math]::Max(0, $avant - $apres)
-    $Journal.Add("  [OK] $nom : $(Format-Taille $libere) liberes")
+    $Journal.Add("  [OK] $nom : $(Format-Taille $libere) libérés")
     return $libere
 }
 
@@ -388,12 +400,12 @@ function Get-StatutVersion {
         $distante = (($brut -split "`n")[0]).Trim()
         if ([version]$distante -gt [version]$Version) {
             return @{
-                Texte   = "v$Version - maj dispo ($distante)"
+                Texte   = "v$Version - MAJ DISPO ($distante)"
                 Couleur = [System.Drawing.Color]::FromArgb(190, 90, 0)
             }
         } else {
             return @{
-                Texte   = "v$Version - a jour"
+                Texte   = "v$Version - À JOUR"
                 Couleur = [System.Drawing.Color]::FromArgb(20, 120, 70)
             }
         }
@@ -417,11 +429,11 @@ function Test-Licence {
 
     # Pas de numero configure sur ce poste : on laisse passer mais on le note
     if (-not (Test-Path $FichierID)) {
-        return @{ Bloque = $false; Note = "poste non enregistre" }
+        return @{ Bloque = $false; Note = "poste non enregistré" }
     }
     $id = ((Get-Content -Path $FichierID -TotalCount 1) -as [string]).Trim()
     if (-not $id) {
-        return @{ Bloque = $false; Note = "poste non enregistre" }
+        return @{ Bloque = $false; Note = "poste non enregistré" }
     }
 
     try {
@@ -465,7 +477,7 @@ function Test-Licence {
 # ================================================================
 function Write-Rapport($lignes, $total) {
     $horodatage  = Get-Date -Format "yyyy-MM-dd_HH-mm"
-    $dateLisible = Get-Date -Format "dd/MM/yyyy 'a' HH:mm"
+    $dateLisible = Get-Date -Format "dd/MM/yyyy 'à' HH:mm"
     $bureau = [Environment]::GetFolderPath("Desktop")
     $chemin = Join-Path $bureau "Rapport-nettoyage_$horodatage.txt"
     $sep = "=" * 58
@@ -479,7 +491,7 @@ function Write-Rapport($lignes, $total) {
     $c.Add("")
     $c.Add("   Vous pouvez SUPPRIMER ce fichier sans aucun risque.")
     $c.Add("   Aucune action n'est requise de votre part.")
-    $c.Add("   Il ne contient aucune donnee personnelle.")
+    $c.Add("   Il ne contient aucune donnée personnelle.")
     $c.Add("")
     $c.Add($sep)
     $c.Add("   Date du nettoyage : $dateLisible")
@@ -487,16 +499,16 @@ function Write-Rapport($lignes, $total) {
     $c.Add("   Session Windows   : $env:USERNAME")
     $c.Add($sep)
     $c.Add("")
-    $c.Add("   Detail des operations effectuees :")
+    $c.Add("   Détail des opérations effectuées :")
     $c.Add("")
     foreach ($l in $lignes) { $c.Add("     $l") }
     $c.Add("")
     $c.Add($sep)
-    $c.Add(("   ESPACE TOTAL LIBERE : {0}" -f (Format-Taille $total)))
+    $c.Add(("   ESPACE TOTAL LIBÉRÉ : {0}" -f (Format-Taille $total)))
     $c.Add($sep)
     $c.Add("")
     $c.Add("   Rappel : ce fichier n'est qu'un compte-rendu du")
-    $c.Add("   nettoyage. Vous pouvez le jeter a la corbeille.")
+    $c.Add("   nettoyage. Vous pouvez le jeter à la corbeille.")
     $c.Add("")
     $c.Add("   $NomEntreprise")
 
@@ -509,6 +521,76 @@ function Write-Rapport($lignes, $total) {
 }
 
 # ================================================================
+#  État de santé du PC : version Windows + a jour, disque, RAM,
+#  sante des disques. Renvoie un texte multi-lignes.
+# ================================================================
+function Get-EtatSante {
+    $lignes = New-Object System.Collections.Generic.List[string]
+
+    # --- Windows : version et statut de mise a jour ---
+    try {
+        $rk = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        $p  = Get-ItemProperty -Path $rk -ErrorAction SilentlyContinue
+        $build = [int]$p.CurrentBuild
+        $ubr   = $p.UBR
+        $disp  = $p.DisplayVersion
+        if (-not $disp) { $disp = $p.ReleaseId }
+        $famille = if ($build -ge 22000) { "Windows 11" } else { "Windows 10" }
+        $verTxt  = "$famille $disp (build $build.$ubr)"
+
+        if ($famille -eq "Windows 10") {
+            $lignes.Add("Windows : $verTxt")
+            $lignes.Add("   Windows 10 : fin de support depuis octobre 2025 (migration conseillée)")
+        } else {
+            $cur = 0; $last = 0
+            if ($disp -match '^(\d+)H(\d+)$') { $cur  = [int]$matches[1]*10 + [int]$matches[2] }
+            if ($DerniereVersionWin11 -match '^(\d+)H(\d+)$') { $last = [int]$matches[1]*10 + [int]$matches[2] }
+            if ($cur -gt 0 -and $cur -ge $last) {
+                $lignes.Add("Windows : $verTxt - À JOUR")
+            } else {
+                $lignes.Add("Windows : $verTxt")
+                $lignes.Add("   Mise à niveau disponible (dernière version : $DerniereVersionWin11)")
+            }
+        }
+    } catch {
+        $lignes.Add("Windows : version indéterminée")
+    }
+
+    # --- Espace disque systeme ---
+    try {
+        $sysName = ($env:SystemDrive).TrimEnd(':')
+        $dr = Get-PSDrive -Name $sysName -ErrorAction SilentlyContinue
+        $libre = [int64]$dr.Free
+        $total = [int64]$dr.Free + [int64]$dr.Used
+        $pct = if ($total -gt 0) { [math]::Round(100 * $libre / $total) } else { 0 }
+        $lignes.Add("Disque $($env:SystemDrive) : $(Format-Taille $libre) libres sur $(Format-Taille $total) ($pct% libre)")
+    } catch {}
+
+    # --- Memoire vive ---
+    try {
+        $ram = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory
+        if ($ram) { $lignes.Add("Mémoire vive (RAM) : $(Format-Taille $ram)") }
+    } catch {}
+
+    # --- Sante des disques (SMART simplifie) ---
+    try {
+        $disks = Get-PhysicalDisk -ErrorAction SilentlyContinue
+        foreach ($d in $disks) {
+            $type = if ($d.MediaType) { "$($d.MediaType)" } else { "Disque" }
+            $sante = switch ("$($d.HealthStatus)") {
+                "Healthy"   { "Sain" }
+                "Warning"   { "À surveiller" }
+                "Unhealthy" { "Défaillant" }
+                default     { "$($d.HealthStatus)" }
+            }
+            $lignes.Add("Disque ($($d.FriendlyName)) : $type - état $sante")
+        }
+    } catch {}
+
+    return ($lignes -join "`r`n")
+}
+
+# ================================================================
 #  Construction de l'interface graphique
 # ================================================================
 $categories = Get-Categories
@@ -517,14 +599,14 @@ $categories = Get-Categories
 $licence = Test-Licence
 if ($licence.Bloque) {
     if ($licence.Raison -eq "verif") {
-        $msgLic = "Impossible de verifier votre licence Urgence Informatique.`n`n" +
-                  "Merci de connecter ce poste a internet, puis de relancer.`n`n" +
-                  "Si le probleme persiste, contactez-nous."
+        $msgLic = "Impossible de vérifier votre licence Urgence Informatique.`n`n" +
+                  "Merci de connecter ce poste à internet, puis de relancer.`n`n" +
+                  "Si le problème persiste, contactez-nous."
     } else {
         $msgLic = "Votre contrat de maintenance Urgence Informatique a pris fin.`n`n" +
-                  "Ce logiciel est desormais desactive.`n`n" +
+                  "Ce logiciel est désormais désactivé.`n`n" +
                   "Contactez-nous pour renouveler votre souscription " +
-                  "et reactiver le logiciel."
+                  "et réactiver le logiciel."
     }
     [System.Windows.Forms.MessageBox]::Show($msgLic, "Urgence Informatique - Licence", "OK", "Warning") | Out-Null
     return
@@ -541,7 +623,7 @@ $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
 # Bandeau titre
 $titre = New-Object System.Windows.Forms.Label
-$titre.Text = "Nettoyage du systeme"
+$titre.Text = "Nettoyage du système"
 $titre.Font = New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
 $titre.ForeColor = [System.Drawing.Color]::FromArgb(30, 60, 110)
 $titre.Location = New-Object System.Drawing.Point(20, 15)
@@ -566,7 +648,7 @@ if ($EstAdmin) {
     $lblAdmin.Text = "Mode administrateur : nettoyage complet disponible."
     $lblAdmin.ForeColor = [System.Drawing.Color]::FromArgb(20, 110, 70)
 } else {
-    $lblAdmin.Text = "Mode standard. Pour le nettoyage systeme complet, relancer en tant qu'administrateur."
+    $lblAdmin.Text = "Mode standard. Pour le nettoyage système complet, relancez en tant qu'administrateur."
     $lblAdmin.ForeColor = [System.Drawing.Color]::FromArgb(160, 80, 0)
 }
 $lblAdmin.Location = New-Object System.Drawing.Point(20, 48)
@@ -631,21 +713,64 @@ $form.Controls.Add($txtLog)
 # Barre de progression
 $progress = New-Object System.Windows.Forms.ProgressBar
 $progress.Location = New-Object System.Drawing.Point(20, 525)
-$progress.Size = New-Object System.Drawing.Size(470, 18)
+$progress.Size = New-Object System.Drawing.Size(440, 18)
 $form.Controls.Add($progress)
+
+# Indicateur d'activite (petite fleche qui tourne) a cote de la barre
+$script:spinAngle = 0
+$spinner = New-Object System.Windows.Forms.Panel
+$spinner.Location = New-Object System.Drawing.Point(468, 523)
+$spinner.Size = New-Object System.Drawing.Size(22, 22)
+$spinner.Visible = $false
+$spinner.Add_Paint({
+    param($s, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(30, 110, 200), 3)
+    $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
+    $rect = New-Object System.Drawing.Rectangle(3, 3, 15, 15)
+    $g.DrawArc($pen, $rect, $script:spinAngle, 270)
+    $pen.Dispose()
+})
+$form.Controls.Add($spinner)
+
+$spinTimer = New-Object System.Windows.Forms.Timer
+$spinTimer.Interval = 80
+$spinTimer.Add_Tick({
+    $script:spinAngle = ($script:spinAngle + 30) % 360
+    $spinner.Invalidate()
+})
+
+# Demarre / arrete l'indicateur d'activite
+function Start-Spinner {
+    $spinner.Visible = $true
+    $spinTimer.Start()
+}
+function Stop-Spinner {
+    $spinTimer.Stop()
+    $spinner.Visible = $false
+}
 
 # Boutons
 $btnAnalyser = New-Object System.Windows.Forms.Button
 $btnAnalyser.Text = "Analyser"
 $btnAnalyser.Location = New-Object System.Drawing.Point(20, 553)
-$btnAnalyser.Size = New-Object System.Drawing.Size(150, 36)
+$btnAnalyser.Size = New-Object System.Drawing.Size(112, 36)
 $btnAnalyser.BackColor = [System.Drawing.Color]::White
 $form.Controls.Add($btnAnalyser)
 
+$btnSante = New-Object System.Windows.Forms.Button
+$btnSante.Text = "État de santé"
+$btnSante.Location = New-Object System.Drawing.Point(138, 553)
+$btnSante.Size = New-Object System.Drawing.Size(112, 36)
+$btnSante.BackColor = [System.Drawing.Color]::White
+$form.Controls.Add($btnSante)
+
 $btnNettoyer = New-Object System.Windows.Forms.Button
 $btnNettoyer.Text = "Nettoyer"
-$btnNettoyer.Location = New-Object System.Drawing.Point(180, 553)
-$btnNettoyer.Size = New-Object System.Drawing.Size(150, 36)
+$btnNettoyer.Location = New-Object System.Drawing.Point(256, 553)
+$btnNettoyer.Size = New-Object System.Drawing.Size(112, 36)
 $btnNettoyer.BackColor = [System.Drawing.Color]::FromArgb(30, 110, 200)
 $btnNettoyer.ForeColor = [System.Drawing.Color]::White
 $btnNettoyer.FlatStyle = "Flat"
@@ -653,11 +778,27 @@ $form.Controls.Add($btnNettoyer)
 
 $btnFermer = New-Object System.Windows.Forms.Button
 $btnFermer.Text = "Fermer"
-$btnFermer.Location = New-Object System.Drawing.Point(340, 553)
-$btnFermer.Size = New-Object System.Drawing.Size(150, 36)
+$btnFermer.Location = New-Object System.Drawing.Point(374, 553)
+$btnFermer.Size = New-Object System.Drawing.Size(112, 36)
 $btnFermer.BackColor = [System.Drawing.Color]::White
 $btnFermer.Add_Click({ $form.Close() })
 $form.Controls.Add($btnFermer)
+
+# Bouton État de santé : affiche un bilan rapide du PC
+$btnSante.Add_Click({
+    $btnSante.Enabled = $false
+    $ancien = $lblResultat.Text
+    $lblResultat.Text = "Analyse de l'état du PC..."
+    [System.Windows.Forms.Application]::DoEvents()
+    try {
+        $bilan = Get-EtatSante
+        [System.Windows.Forms.MessageBox]::Show($bilan, "État de santé du PC - $NomEntreprise",
+            "OK", "Information") | Out-Null
+        $lblResultat.Text = $ancien
+    } finally {
+        $btnSante.Enabled = $true
+    }
+})
 
 # ---- Action : Analyser ----
 $btnAnalyser.Add_Click({
@@ -665,28 +806,40 @@ $btnAnalyser.Add_Click({
     $Journal.Clear()
     $coches = $checkboxes.Keys | Where-Object { $checkboxes[$_].Checked }
     if (-not $coches) {
-        [System.Windows.Forms.MessageBox]::Show("Aucune categorie selectionnee.", "Info")
+        [System.Windows.Forms.MessageBox]::Show("Aucune catégorie sélectionnée.", "Info")
         return
     }
-    $progress.Maximum = @($coches).Count
-    $progress.Value = 0
-    $totalEstime = 0L
-    foreach ($nom in $coches) {
-        $taille = Measure-Categorie $categories[$nom]
-        $totalEstime += $taille
-        $txtLog.AppendText("$nom : $(Format-Taille $taille)`r`n")
-        $progress.Value++
-        [System.Windows.Forms.Application]::DoEvents()
+    $btnAnalyser.Enabled = $false
+    $btnNettoyer.Enabled = $false
+    $btnFermer.Enabled   = $false
+    $lblResultat.Text = "Analyse en cours..."
+    Start-Spinner
+    try {
+        $progress.Maximum = @($coches).Count
+        $progress.Value = 0
+        $totalEstime = 0L
+        foreach ($nom in $coches) {
+            $taille = Measure-Categorie $categories[$nom]
+            $totalEstime += $taille
+            $txtLog.AppendText("$nom : $(Format-Taille $taille)`r`n")
+            $progress.Value++
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+        $lblResultat.Text = "Espace récupérable estimé : $(Format-Taille $totalEstime)"
+        $progress.Value = 0
+    } finally {
+        Stop-Spinner
+        $btnAnalyser.Enabled = $true
+        $btnNettoyer.Enabled = $true
+        $btnFermer.Enabled   = $true
     }
-    $lblResultat.Text = "Espace recuperable estime : $(Format-Taille $totalEstime)"
-    $progress.Value = 0
 })
 
 # ---- Action : Nettoyer ----
 $btnNettoyer.Add_Click({
     $coches = $checkboxes.Keys | Where-Object { $checkboxes[$_].Checked }
     if (-not $coches) {
-        [System.Windows.Forms.MessageBox]::Show("Aucune categorie selectionnee.", "Info")
+        [System.Windows.Forms.MessageBox]::Show("Aucune catégorie sélectionnée.", "Info")
         return
     }
     $confirm = [System.Windows.Forms.MessageBox]::Show(
@@ -694,30 +847,42 @@ $btnNettoyer.Add_Click({
         "et vos navigateurs (Chrome, Edge, Firefox...).`n`n" +
         "Enregistrez votre travail en cours, puis cliquez sur OK.`n`n" +
         "Si une application reste ouverte, son cache pourra ne pas " +
-        "etre entierement nettoye.",
+        "être entièrement nettoyé.",
         "Fermez vos applications", "OKCancel", "Warning")
     if ($confirm -ne "OK") { return }
 
     $txtLog.Clear()
     $Journal.Clear()
 
-    $progress.Maximum = @($coches).Count
-    $progress.Value = 0
-    $totalLibere = 0L
+    $btnAnalyser.Enabled = $false
+    $btnNettoyer.Enabled = $false
+    $btnFermer.Enabled   = $false
+    $lblResultat.Text = "Nettoyage en cours..."
+    Start-Spinner
+    try {
+        $progress.Maximum = @($coches).Count
+        $progress.Value = 0
+        $totalLibere = 0L
 
-    foreach ($nom in $coches) {
-        $libere = Clear-Categorie $nom $categories[$nom]
-        $totalLibere += $libere
-        $progress.Value++
-        [System.Windows.Forms.Application]::DoEvents()
+        foreach ($nom in $coches) {
+            $libere = Clear-Categorie $nom $categories[$nom]
+            $totalLibere += $libere
+            $progress.Value++
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
+        # Vidage du cache DNS (toujours sans risque)
+        try { ipconfig /flushdns | Out-Null; $Journal.Add("  [OK] Cache DNS vide") } catch {}
+
+        $txtLog.Text = ($Journal -join "`r`n")
+        $lblResultat.Text = "Terminé. Espace libéré : $(Format-Taille $totalLibere)"
+        $progress.Value = 0
+    } finally {
+        Stop-Spinner
+        $btnAnalyser.Enabled = $true
+        $btnNettoyer.Enabled = $true
+        $btnFermer.Enabled   = $true
     }
-
-    # Vidage du cache DNS (toujours sans risque)
-    try { ipconfig /flushdns | Out-Null; $Journal.Add("  [OK] Cache DNS vide") } catch {}
-
-    $txtLog.Text = ($Journal -join "`r`n")
-    $lblResultat.Text = "Termine. Espace libere : $(Format-Taille $totalLibere)"
-    $progress.Value = 0
 
     $cheminRapport = $null
     if ($GenererRapport) {
@@ -726,16 +891,16 @@ $btnNettoyer.Add_Click({
 
     # Un redemarrage est-il necessaire (memoire virtuelle modifiee) ?
     $redemarrage = ($Journal | Where-Object { $_ -match "Memoire virtuelle fixee" }).Count -gt 0
-    $suffixe = if ($redemarrage) { "`n`nUn redemarrage est necessaire pour appliquer la memoire virtuelle." } else { "" }
+    $suffixe = if ($redemarrage) { "`n`nUn redémarrage est nécessaire pour appliquer la mémoire virtuelle." } else { "" }
 
     if ($cheminRapport) {
         [System.Windows.Forms.MessageBox]::Show(
-            ("Nettoyage termine.`nEspace libere : {0}`n`n" -f (Format-Taille $totalLibere)) +
-            "Un rapport a ete enregistre sur le Bureau :`n$cheminRapport" + $suffixe,
+            ("Nettoyage terminé.`nEspace libéré : {0}`n`n" -f (Format-Taille $totalLibere)) +
+            "Un rapport a été enregistré sur le Bureau :`n$cheminRapport" + $suffixe,
             "$NomEntreprise", "OK", "Information")
     } else {
         [System.Windows.Forms.MessageBox]::Show(
-            ("Nettoyage termine.`nEspace libere : {0}" -f (Format-Taille $totalLibere)) + $suffixe,
+            ("Nettoyage terminé.`nEspace libéré : {0}" -f (Format-Taille $totalLibere)) + $suffixe,
             "$NomEntreprise", "OK", "Information")
     }
 })
