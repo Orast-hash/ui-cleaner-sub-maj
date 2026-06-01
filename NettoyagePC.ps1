@@ -26,7 +26,7 @@ Add-Type -AssemblyName System.Drawing
 
 # ---- Personnalisation ----
 $NomEntreprise   = "Urgence Informatique"
-$Version         = "1.3.0"
+$Version         = "1.3.1"
 # Generer le rapport sur le Bureau apres nettoyage ? ($true / $false)
 $GenererRapport  = $false
 # Memoire virtuelle : taille calculee selon la RAM du poste.
