@@ -1,8 +1,3 @@
-# ================================================
-#  Les lignes commencant par # sont ignorees.
-#  Pour resilier un client : supprime sa ligne
-#  (ou mets un # devant) puis enregistre le fichier.
-# ================================================
 1;TEST LICENCE
-2;Martin
+2;Legrain01/06/2026-trial one month
 3;Boulangerie Leroy
