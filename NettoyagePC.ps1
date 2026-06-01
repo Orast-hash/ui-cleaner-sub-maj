@@ -36,11 +36,11 @@ $PageFilePlancher = 2048
 $PageFilePlafond  = 8192
 # URL du petit fichier version.txt (pour afficher le statut a jour / obsolete).
 # Mets la meme adresse que dans Lanceur.ps1.
-$UrlVersion    = "https://raw.githubusercontent.com/ton-compte/ton-depot/main/version.txt"
+$UrlVersion    = "https://raw.githubusercontent.com/Orast-hash/ui-cleaner-sub-maj/refs/heads/main/version.txt"
 
 # ---- Contrats de maintenance (licence) ----
 # Liste des clients actifs hebergee sur GitHub (un ID par ligne, format ID;Nom)
-$UrlClients = "https://raw.githubusercontent.com/ton-compte/ton-depot/main/clients.txt"
+$UrlClients = "https://raw.githubusercontent.com/Orast-hash/ui-cleaner-sub-maj/refs/heads/main/clients.txt"
 # Fichier contenant le numero du client, ecrit sur CE poste a l'installation
 $FichierID  = "C:\ProgramData\Urgence Informatique\client.id"
 # Tolerance hors-ligne (en jours) avant de bloquer si la liste est injoignable
