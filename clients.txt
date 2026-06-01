@@ -3,6 +3,6 @@
 #  Pour resilier un client : supprime sa ligne
 #  (ou mets un # devant) puis enregistre le fichier.
 # ================================================
-1;TEST LICENCE
+#1;TEST LICENCE
 2;Martin
 3;Boulangerie Leroy
