@@ -26,7 +26,7 @@ Add-Type -AssemblyName System.Drawing
 
 # ---- Personnalisation ----
 $NomEntreprise   = "Urgence Informatique"
-$Version         = "1.1.0"
+$Version         = "1.3.0"
 # Generer le rapport sur le Bureau apres nettoyage ? ($true / $false)
 $GenererRapport  = $false
 # Memoire virtuelle : taille calculee selon la RAM du poste.
@@ -36,11 +36,11 @@ $PageFilePlancher = 2048
 $PageFilePlafond  = 8192
 # URL du petit fichier version.txt (pour afficher le statut a jour / obsolete).
 # Mets la meme adresse que dans Lanceur.ps1.
-$UrlVersion    = "https://raw.githubusercontent.com/Orast-hash/ui-cleaner-sub-maj/refs/heads/main/version.txtt"
+$UrlVersion    = "https://raw.githubusercontent.com/ton-compte/ton-depot/main/version.txt"
 
 # ---- Contrats de maintenance (licence) ----
 # Liste des clients actifs hebergee sur GitHub (un ID par ligne, format ID;Nom)
-$UrlClients = "https://raw.githubusercontent.com/Orast-hash/ui-cleaner-sub-maj/refs/heads/main/clients.txt"
+$UrlClients = "https://raw.githubusercontent.com/ton-compte/ton-depot/main/clients.txt"
 # Fichier contenant le numero du client, ecrit sur CE poste a l'installation
 $FichierID  = "C:\ProgramData\Urgence Informatique\client.id"
 # Tolerance hors-ligne (en jours) avant de bloquer si la liste est injoignable
@@ -66,6 +66,15 @@ function Get-TaillePageFile {
     return [int]$t
 }
 $PageFileMo = Get-TaillePageFile
+
+# Espace libre (octets) sur le lecteur systeme - sert a mesurer le gain
+# des operations qui ne se comptent pas fichier par fichier (DISM, etc.)
+function Get-FreeBytes {
+    try {
+        $d = ($env:SystemDrive).TrimEnd(':')
+        return (Get-PSDrive -Name $d -ErrorAction SilentlyContinue).Free
+    } catch { return 0L }
+}
 
 # ================================================================
 #  Definition des categories de nettoyage
@@ -151,6 +160,18 @@ function Get-Categories {
         PageFile = $true
     }
 
+    $cats["Nettoyer le composant Windows (WinSxS / maj obsoletes)"] = @{
+        Admin  = $true
+        WinSxS = $true
+        Defaut = $false
+    }
+
+    $cats["Supprimer Windows.old (ancienne installation)"] = @{
+        Admin      = $true
+        WindowsOld = $true
+        Defaut     = $false
+    }
+
     return $cats
 }
 
@@ -172,6 +193,24 @@ function Measure-Categorie($cat) {
 
     if ($cat.PageFile) {
         # Reglage de configuration : pas d'espace mesurable a l'analyse
+        return 0L
+    }
+
+    if ($cat.WindowsOld) {
+        # Taille approximative du dossier Windows.old s'il existe
+        $wo = "$env:SystemDrive\Windows.old"
+        if (Test-Path $wo) {
+            try {
+                return (Get-ChildItem $wo -Recurse -Force -File -ErrorAction SilentlyContinue |
+                        Measure-Object -Property Length -Sum).Sum
+            } catch { return 0L }
+        }
+        return 0L
+    }
+
+    if ($cat.WinSxS) {
+        # Operation systeme : le gain reel est mesure apres coup
+        # (espace disque libere). Pas d'estimation fiable a l'analyse.
         return 0L
     }
 
@@ -245,6 +284,49 @@ function Clear-Categorie($nom, $cat) {
             $Journal.Add("  [!]  Memoire virtuelle : $($_.Exception.Message)")
         }
         return 0L
+    }
+
+    if ($cat.WinSxS) {
+        # Methode SURE et recommandee par Microsoft : DISM.
+        # On ne supprime JAMAIS de fichiers a la main dans WinSxS.
+        # Pas de /ResetBase (qui empecherait de desinstaller les maj).
+        $libreAvant = Get-FreeBytes
+        try {
+            & "$env:WINDIR\System32\Dism.exe" /Online /Cleanup-Image /StartComponentCleanup | Out-Null
+            $gagne = [math]::Max(0, (Get-FreeBytes) - $libreAvant)
+            $Journal.Add("  [OK] Composant Windows nettoye (DISM) : $(Format-Taille $gagne) liberes")
+            return $gagne
+        } catch {
+            $Journal.Add("  [!]  Composant Windows (DISM) : $($_.Exception.Message)")
+            return 0L
+        }
+    }
+
+    if ($cat.WindowsOld) {
+        $wo = "$env:SystemDrive\Windows.old"
+        if (-not (Test-Path $wo)) {
+            $Journal.Add("  [i]  Windows.old : absent (rien a supprimer)")
+            return 0L
+        }
+        $libreAvant = Get-FreeBytes
+        try {
+            # Dossier protege (TrustedInstaller) : prise de possession requise.
+            # "< nul" evite tout blocage sur une invite (Windows localise) ;
+            # on cible le groupe Administrateurs par son SID (independant de la langue).
+            & cmd.exe /c "takeown /F `"$wo`" /A /R /D Y < nul" 2>&1 | Out-Null
+            & icacls "$wo" /grant "*S-1-5-32-544:F" /T /C /Q 2>&1 | Out-Null
+            & cmd.exe /c "rd /s /q `"$wo`"" 2>&1 | Out-Null
+            $gagne = [math]::Max(0, (Get-FreeBytes) - $libreAvant)
+            if (Test-Path $wo) {
+                $Journal.Add("  [!]  Windows.old : suppression partielle ($(Format-Taille $gagne))")
+            } else {
+                $Journal.Add("  [OK] Windows.old supprime : $(Format-Taille $gagne) liberes")
+            }
+            return $gagne
+        } catch {
+            $Journal.Add("  [!]  Windows.old : $($_.Exception.Message)")
+            return 0L
+        }
     }
 
     if ($cat.Corbeille) {
@@ -427,38 +509,6 @@ function Write-Rapport($lignes, $total) {
 }
 
 # ================================================================
-#  Fermeture des applications avant nettoyage.
-#  On ferme proprement (CloseMainWindow) puis on force ce qui
-#  resiste. Liste ciblee : surtout les navigateurs, qui
-#  verrouillent leurs caches. Ajoute ici tes propres applis.
-# ================================================================
-$AppsAFermer = @(
-    "chrome", "msedge", "firefox", "opera", "opera_gx",
-    "brave", "vivaldi", "iexplore"
-)
-
-function Close-Applications {
-    # 1) Tentative de fermeture propre (laisse une chance d'enregistrer)
-    foreach ($nom in $AppsAFermer) {
-        Get-Process -Name $nom -ErrorAction SilentlyContinue | ForEach-Object {
-            $_.CloseMainWindow() | Out-Null
-        }
-    }
-    Start-Sleep -Seconds 3
-
-    # 2) Fermeture forcee de ce qui n'a pas repondu
-    $forces = 0
-    foreach ($nom in $AppsAFermer) {
-        $restants = Get-Process -Name $nom -ErrorAction SilentlyContinue
-        if ($restants) {
-            $restants | Stop-Process -Force -ErrorAction SilentlyContinue
-            $forces++
-        }
-    }
-    $Journal.Add("  [OK] Applications fermees avant le nettoyage")
-}
-
-# ================================================================
 #  Construction de l'interface graphique
 # ================================================================
 $categories = Get-Categories
@@ -482,7 +532,7 @@ if ($licence.Bloque) {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "NettoyagePC v$Version - $NomEntreprise"
-$form.Size = New-Object System.Drawing.Size(520, 600)
+$form.Size = New-Object System.Drawing.Size(520, 645)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -526,7 +576,7 @@ $form.Controls.Add($lblAdmin)
 # Zone des cases a cocher
 $panel = New-Object System.Windows.Forms.Panel
 $panel.Location = New-Object System.Drawing.Point(20, 82)
-$panel.Size = New-Object System.Drawing.Size(470, 280)
+$panel.Size = New-Object System.Drawing.Size(470, 300)
 $panel.BackColor = [System.Drawing.Color]::White
 $panel.BorderStyle = "FixedSingle"
 $panel.AutoScroll = $true
@@ -540,6 +590,10 @@ foreach ($nom in $categories.Keys) {
     $cb.Location = New-Object System.Drawing.Point(12, $y)
     $cb.Size = New-Object System.Drawing.Size(440, 24)
     $cb.Checked = $true
+    # Categories sensibles (systeme) : decochees par defaut
+    if ($categories[$nom].ContainsKey('Defaut') -and -not $categories[$nom].Defaut) {
+        $cb.Checked = $false
+    }
 
     if ($categories[$nom].Admin -and -not $EstAdmin) {
         $cb.Enabled = $false
@@ -558,7 +612,7 @@ $lblResultat = New-Object System.Windows.Forms.Label
 $lblResultat.Text = ""
 $lblResultat.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $lblResultat.ForeColor = [System.Drawing.Color]::FromArgb(30, 60, 110)
-$lblResultat.Location = New-Object System.Drawing.Point(20, 372)
+$lblResultat.Location = New-Object System.Drawing.Point(20, 392)
 $lblResultat.Size = New-Object System.Drawing.Size(470, 26)
 $lblResultat.TextAlign = "MiddleCenter"
 $form.Controls.Add($lblResultat)
@@ -568,29 +622,29 @@ $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Multiline = $true
 $txtLog.ScrollBars = "Vertical"
 $txtLog.ReadOnly = $true
-$txtLog.Location = New-Object System.Drawing.Point(20, 402)
-$txtLog.Size = New-Object System.Drawing.Size(470, 90)
+$txtLog.Location = New-Object System.Drawing.Point(20, 422)
+$txtLog.Size = New-Object System.Drawing.Size(470, 95)
 $txtLog.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
 $txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
 $form.Controls.Add($txtLog)
 
 # Barre de progression
 $progress = New-Object System.Windows.Forms.ProgressBar
-$progress.Location = New-Object System.Drawing.Point(20, 500)
+$progress.Location = New-Object System.Drawing.Point(20, 525)
 $progress.Size = New-Object System.Drawing.Size(470, 18)
 $form.Controls.Add($progress)
 
 # Boutons
 $btnAnalyser = New-Object System.Windows.Forms.Button
 $btnAnalyser.Text = "Analyser"
-$btnAnalyser.Location = New-Object System.Drawing.Point(20, 528)
+$btnAnalyser.Location = New-Object System.Drawing.Point(20, 553)
 $btnAnalyser.Size = New-Object System.Drawing.Size(150, 36)
 $btnAnalyser.BackColor = [System.Drawing.Color]::White
 $form.Controls.Add($btnAnalyser)
 
 $btnNettoyer = New-Object System.Windows.Forms.Button
 $btnNettoyer.Text = "Nettoyer"
-$btnNettoyer.Location = New-Object System.Drawing.Point(180, 528)
+$btnNettoyer.Location = New-Object System.Drawing.Point(180, 553)
 $btnNettoyer.Size = New-Object System.Drawing.Size(150, 36)
 $btnNettoyer.BackColor = [System.Drawing.Color]::FromArgb(30, 110, 200)
 $btnNettoyer.ForeColor = [System.Drawing.Color]::White
@@ -599,7 +653,7 @@ $form.Controls.Add($btnNettoyer)
 
 $btnFermer = New-Object System.Windows.Forms.Button
 $btnFermer.Text = "Fermer"
-$btnFermer.Location = New-Object System.Drawing.Point(340, 528)
+$btnFermer.Location = New-Object System.Drawing.Point(340, 553)
 $btnFermer.Size = New-Object System.Drawing.Size(150, 36)
 $btnFermer.BackColor = [System.Drawing.Color]::White
 $btnFermer.Add_Click({ $form.Close() })
@@ -636,20 +690,16 @@ $btnNettoyer.Add_Click({
         return
     }
     $confirm = [System.Windows.Forms.MessageBox]::Show(
-        "IMPORTANT : avant le nettoyage, l'outil va fermer les " +
-        "navigateurs et certaines applications.`n`n" +
-        "Veuillez ENREGISTRER votre travail en cours.`n`n" +
-        "Voulez-vous continuer ?",
-        "Fermeture des applications", "OKCancel", "Warning")
+        "Avant de lancer le nettoyage, fermez vos applications " +
+        "et vos navigateurs (Chrome, Edge, Firefox...).`n`n" +
+        "Enregistrez votre travail en cours, puis cliquez sur OK.`n`n" +
+        "Si une application reste ouverte, son cache pourra ne pas " +
+        "etre entierement nettoye.",
+        "Fermez vos applications", "OKCancel", "Warning")
     if ($confirm -ne "OK") { return }
 
     $txtLog.Clear()
     $Journal.Clear()
-
-    # Fermeture des applications ouvertes (navigateurs, etc.)
-    $lblResultat.Text = "Fermeture des applications en cours..."
-    [System.Windows.Forms.Application]::DoEvents()
-    Close-Applications
 
     $progress.Maximum = @($coches).Count
     $progress.Value = 0
