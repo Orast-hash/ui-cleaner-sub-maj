@@ -1,0 +1,10 @@
+# ================================================
+#  Clients Urgence Informatique sous contrat de maintenance actif
+#  Un client par ligne, format :  ID;Nom
+#  Les lignes commencant par # sont ignorees.
+#  Pour resilier un client : supprime sa ligne
+#  (ou mets un # devant) puis enregistre le fichier.
+# ================================================
+1;Dupont
+2;Martin
+3;Boulangerie Leroy
