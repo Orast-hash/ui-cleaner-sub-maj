@@ -439,13 +439,13 @@ function Get-StatutVersion {
             }
         } else {
             return @{
-                Texte   = "v$Version - connexion au serveur de nettoyage - OK"
+                Texte   = "v$Version - Connexion au serveur de nettoyage - OK"
                 Couleur = [System.Drawing.Color]::FromArgb(20, 120, 70)
             }
         }
     } catch {
         return @{
-            Texte   = "v$Version - connexion au serveur de nettoyage : indisponible"
+            Texte   = "v$Version - Connexion au serveur de nettoyage : indisponible"
             Couleur = [System.Drawing.Color]::Gray
         }
     }
